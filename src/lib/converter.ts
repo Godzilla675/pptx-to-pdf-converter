@@ -1,3 +1,5 @@
+import JSZip from 'jszip'
+import { jsPDF } from 'jspdf'
 import { ConversionFile, ConversionSettings } from './types'
 import { extractTextFromSlides } from './ocr'
 
@@ -54,8 +56,264 @@ export const generateThumbnail = async (file: File): Promise<string> => {
   })
 }
 
+interface SlideData {
+  texts: { content: string; x: number; y: number; fontSize: number; bold: boolean }[]
+  images: { dataUrl: string; x: number; y: number; w: number; h: number }[]
+}
+
+const parseEmu = (emu: string | undefined): number => {
+  if (!emu) return 0
+  return parseInt(emu, 10) / 914400 // EMU to inches
+}
+
+const parsePptxSlides = async (file: File): Promise<{ slides: SlideData[]; slideCount: number }> => {
+  const arrayBuffer = await file.arrayBuffer()
+  const zip = await JSZip.loadAsync(arrayBuffer)
+
+  // Find all slide files
+  const slideFiles: string[] = []
+  zip.forEach((path) => {
+    const match = path.match(/^ppt\/slides\/slide(\d+)\.xml$/)
+    if (match) {
+      slideFiles.push(path)
+    }
+  })
+
+  // Sort by slide number
+  slideFiles.sort((a, b) => {
+    const numA = parseInt(a.match(/slide(\d+)/)?.[1] || '0', 10)
+    const numB = parseInt(b.match(/slide(\d+)/)?.[1] || '0', 10)
+    return numA - numB
+  })
+
+  // Load media images
+  const mediaImages: Record<string, string> = {}
+
+  // Parse relationships for each slide to map rId to media files
+  const loadSlideRels = async (slideIndex: number): Promise<Record<string, string>> => {
+    const relsPath = `ppt/slides/_rels/slide${slideIndex}.xml.rels`
+    const relsFile = zip.file(relsPath)
+    const rels: Record<string, string> = {}
+    if (relsFile) {
+      const relsXml = await relsFile.async('text')
+      const parser = new DOMParser()
+      const doc = parser.parseFromString(relsXml, 'text/xml')
+      const relationships = doc.getElementsByTagName('Relationship')
+      for (let i = 0; i < relationships.length; i++) {
+        const rel = relationships[i]
+        const rId = rel.getAttribute('Id') || ''
+        const target = rel.getAttribute('Target') || ''
+        const type = rel.getAttribute('Type') || ''
+        if (type.includes('image')) {
+          // Resolve relative path from ppt/slides/ to ppt/
+          const mediaPath = target.startsWith('../') ? 'ppt/' + target.slice(3) : target
+          rels[rId] = mediaPath
+        }
+      }
+    }
+    return rels
+  }
+
+  // Pre-load all media files
+  const mediaFolder = zip.folder('ppt/media')
+  if (mediaFolder) {
+    const mediaPromises: Promise<void>[] = []
+    mediaFolder.forEach((relativePath, entry) => {
+      const fullPath = 'ppt/media/' + relativePath
+      const promise = entry.async('base64').then((base64) => {
+        let mimeType = 'image/png'
+        if (relativePath.endsWith('.jpg') || relativePath.endsWith('.jpeg')) mimeType = 'image/jpeg'
+        else if (relativePath.endsWith('.gif')) mimeType = 'image/gif'
+        else if (relativePath.endsWith('.emf')) mimeType = 'image/emf'
+        else if (relativePath.endsWith('.wmf')) mimeType = 'image/wmf'
+        mediaImages[fullPath] = `data:${mimeType};base64,${base64}`
+      })
+      mediaPromises.push(promise)
+    })
+    await Promise.all(mediaPromises)
+  }
+
+  const slides: SlideData[] = []
+
+  for (const slidePath of slideFiles) {
+    const slideNum = parseInt(slidePath.match(/slide(\d+)/)?.[1] || '0', 10)
+    const slideXml = await zip.file(slidePath)?.async('text')
+    if (!slideXml) continue
+
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(slideXml, 'text/xml')
+
+    const slideData: SlideData = { texts: [], images: [] }
+
+    // Extract text from all text bodies
+    const spElements = doc.getElementsByTagName('p:sp')
+    for (let i = 0; i < spElements.length; i++) {
+      const sp = spElements[i]
+      
+      // Get position from spPr/xfrm
+      const xfrm = sp.getElementsByTagName('a:xfrm')[0]
+      const off = xfrm?.getElementsByTagName('a:off')[0]
+      const ext = xfrm?.getElementsByTagName('a:ext')[0]
+      const x = parseEmu(off?.getAttribute('x') || undefined)
+      const y = parseEmu(off?.getAttribute('y') || undefined)
+
+      // Extract text runs
+      const paragraphs = sp.getElementsByTagName('a:p')
+      let slideY = y
+      for (let p = 0; p < paragraphs.length; p++) {
+        const runs = paragraphs[p].getElementsByTagName('a:r')
+        let paragraphText = ''
+        let isBold = false
+        let fontSize = 18
+
+        for (let r = 0; r < runs.length; r++) {
+          const textEl = runs[r].getElementsByTagName('a:t')[0]
+          if (textEl?.textContent) {
+            paragraphText += textEl.textContent
+          }
+          // Check for bold
+          const rPr = runs[r].getElementsByTagName('a:rPr')[0]
+          if (rPr?.getAttribute('b') === '1') isBold = true
+          const szAttr = rPr?.getAttribute('sz')
+          if (szAttr) fontSize = parseInt(szAttr, 10) / 100
+        }
+
+        if (paragraphText.trim()) {
+          slideData.texts.push({
+            content: paragraphText,
+            x,
+            y: slideY,
+            fontSize: Math.max(10, Math.min(fontSize, 72)),
+            bold: isBold
+          })
+          slideY += fontSize / 72 * 1.4 // line spacing
+        }
+      }
+    }
+
+    // Extract images from pic elements
+    const rels = await loadSlideRels(slideNum)
+    const picElements = doc.getElementsByTagName('p:pic')
+    for (let i = 0; i < picElements.length; i++) {
+      const pic = picElements[i]
+      
+      // Get blipFill embed reference
+      const blip = pic.getElementsByTagName('a:blip')[0]
+      const embedId = blip?.getAttribute('r:embed')
+      
+      if (embedId && rels[embedId]) {
+        const mediaPath = rels[embedId]
+        const dataUrl = mediaImages[mediaPath]
+        
+        if (dataUrl && !mediaPath.endsWith('.emf') && !mediaPath.endsWith('.wmf')) {
+          const xfrm = pic.getElementsByTagName('a:xfrm')[0]
+          const off = xfrm?.getElementsByTagName('a:off')[0]
+          const ext = xfrm?.getElementsByTagName('a:ext')[0]
+          
+          slideData.images.push({
+            dataUrl,
+            x: parseEmu(off?.getAttribute('x') || undefined),
+            y: parseEmu(off?.getAttribute('y') || undefined),
+            w: parseEmu(ext?.getAttribute('cx') || undefined),
+            h: parseEmu(ext?.getAttribute('cy') || undefined)
+          })
+        }
+      }
+    }
+
+    slides.push(slideData)
+  }
+
+  return { slides, slideCount: slideFiles.length }
+}
+
 export const estimateSlideCount = async (file: File): Promise<number> => {
-  return Math.floor(Math.random() * 30) + 5
+  try {
+    const arrayBuffer = await file.arrayBuffer()
+    const zip = await JSZip.loadAsync(arrayBuffer)
+    let count = 0
+    zip.forEach((path) => {
+      if (/^ppt\/slides\/slide\d+\.xml$/.test(path)) {
+        count++
+      }
+    })
+    return count || 1
+  } catch {
+    return 1
+  }
+}
+
+const renderSlideToCanvas = (
+  slideData: SlideData,
+  slideIndex: number,
+  totalSlides: number,
+  fileName: string,
+  quality: string
+): HTMLCanvasElement => {
+  const scale = quality === 'maximum' ? 2 : quality === 'high' ? 1.5 : 1
+  const baseW = 960
+  const baseH = 540
+  const canvas = document.createElement('canvas')
+  canvas.width = baseW * scale
+  canvas.height = baseH * scale
+  const ctx = canvas.getContext('2d')!
+
+  ctx.scale(scale, scale)
+
+  // White background
+  ctx.fillStyle = 'white'
+  ctx.fillRect(0, 0, baseW, baseH)
+
+  const pptWidth = 10 // standard PPTX width in inches
+  const pptHeight = 7.5
+  const scaleX = baseW / pptWidth
+  const scaleY = baseH / pptHeight
+
+  // Render text
+  for (const text of slideData.texts) {
+    const px = text.x * scaleX
+    const py = text.y * scaleY
+    const fontPx = Math.round(text.fontSize * (scaleY / 10))
+    const clampedFont = Math.max(8, Math.min(fontPx, 60))
+
+    ctx.fillStyle = '#1a1a1a'
+    ctx.font = `${text.bold ? 'bold ' : ''}${clampedFont}px sans-serif`
+    ctx.textAlign = 'left'
+    ctx.textBaseline = 'top'
+
+    // Word wrap within slide bounds
+    const maxWidth = baseW - px - 20
+    const words = text.content.split(' ')
+    let line = ''
+    let lineY = py
+
+    for (const word of words) {
+      const testLine = line + (line ? ' ' : '') + word
+      const metrics = ctx.measureText(testLine)
+      if (metrics.width > maxWidth && line) {
+        ctx.fillText(line, Math.max(10, px), lineY)
+        line = word
+        lineY += clampedFont * 1.3
+      } else {
+        line = testLine
+      }
+    }
+    if (line) {
+      ctx.fillText(line, Math.max(10, px), lineY)
+    }
+  }
+
+  // If no text was found, show a fallback indicator
+  if (slideData.texts.length === 0 && slideData.images.length === 0) {
+    ctx.fillStyle = '#999'
+    ctx.font = '16px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.fillText(`Slide ${slideIndex + 1}`, baseW / 2, baseH / 2 - 10)
+    ctx.font = '12px sans-serif'
+    ctx.fillText(fileName, baseW / 2, baseH / 2 + 15)
+  }
+
+  return canvas
 }
 
 export const convertToPDF = async (
@@ -63,104 +321,132 @@ export const convertToPDF = async (
   settings: ConversionSettings,
   onProgress: (progress: number) => void
 ): Promise<{ pdfBlob: Blob; pdfSize: number }> => {
-  const totalSteps = settings.enableOCR ? 100 : 100
-  let currentStep = 0
+  onProgress(5)
 
-  const progressInterval = setInterval(() => {
-    const maxProgress = settings.enableOCR ? 60 : 95
-    currentStep += Math.random() * 10
-    if (currentStep > maxProgress) currentStep = maxProgress
-    onProgress(Math.floor(currentStep))
-  }, 200)
-
-  await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 2000))
-  
-  const qualityMultiplier = settings.quality === 'maximum' ? 1.5 : settings.quality === 'high' ? 1.2 : 1.0
-  const compressionFactor = settings.compression / 100
-  const estimatedSize = Math.floor(file.size * 0.7 * qualityMultiplier * compressionFactor)
-
-  const canvas = document.createElement('canvas')
-  canvas.width = 1920
-  canvas.height = 1080
-  const ctx = canvas.getContext('2d')
-  
-  if (ctx) {
-    ctx.fillStyle = 'white'
-    ctx.fillRect(0, 0, 1920, 1080)
-    
-    const gradient = ctx.createLinearGradient(0, 0, 1920, 1080)
-    gradient.addColorStop(0, '#4a90e2')
-    gradient.addColorStop(1, '#357abd')
-    ctx.fillStyle = gradient
-    ctx.fillRect(100, 100, 1720, 880)
-    
-    ctx.fillStyle = 'white'
-    ctx.font = 'bold 72px Space Grotesk, sans-serif'
-    ctx.textAlign = 'center'
-    ctx.fillText('Converted PDF', 960, 500)
-    
-    ctx.font = '36px Space Grotesk, sans-serif'
-    ctx.fillText(file.name.replace(/\.(pptx|ppt)$/i, ''), 960, 580)
-    
-    ctx.font = '24px Space Grotesk, sans-serif'
-    const settingsText = `Quality: ${settings.quality} | Slides: ${file.slideCount || 0}`
-    ctx.fillText(settingsText, 960, 640)
-
-    if (settings.enableOCR) {
-      ctx.font = '20px Space Grotesk, sans-serif'
-      ctx.fillStyle = '#90CAF9'
-      ctx.fillText('✓ OCR Enabled - Text Searchable', 960, 700)
-    }
+  // Parse the PPTX file
+  let parsedSlides: SlideData[]
+  try {
+    const result = await parsePptxSlides(file.file)
+    parsedSlides = result.slides
+  } catch (error) {
+    throw new Error('Failed to parse PowerPoint file. Make sure it is a valid .pptx file.')
   }
 
-  if (settings.enableOCR) {
-    clearInterval(progressInterval)
-    onProgress(65)
+  if (parsedSlides.length === 0) {
+    throw new Error('No slides found in the PowerPoint file.')
+  }
 
-    try {
-      const slideCount = file.slideCount || 3
-      const slides: HTMLCanvasElement[] = []
-      
-      for (let i = 0; i < slideCount; i++) {
-        slides.push(canvas)
+  onProgress(20)
+
+  // Render slides to canvases
+  const canvases: HTMLCanvasElement[] = []
+  for (let i = 0; i < parsedSlides.length; i++) {
+    const canvas = renderSlideToCanvas(
+      parsedSlides[i],
+      i,
+      parsedSlides.length,
+      file.name,
+      settings.quality
+    )
+    canvases.push(canvas)
+    onProgress(20 + Math.floor((i / parsedSlides.length) * 20))
+  }
+
+  onProgress(40)
+
+  // Load images onto canvases (async because we need to load image elements)
+  for (let i = 0; i < parsedSlides.length; i++) {
+    const slideData = parsedSlides[i]
+    const canvas = canvases[i]
+    const ctx = canvas.getContext('2d')!
+    const scale = settings.quality === 'maximum' ? 2 : settings.quality === 'high' ? 1.5 : 1
+    const baseW = 960
+    const baseH = 540
+    const pptWidth = 10
+    const pptHeight = 7.5
+    const scaleX = baseW / pptWidth
+    const scaleY = baseH / pptHeight
+
+    for (const img of slideData.images) {
+      try {
+        const image = new Image()
+        await new Promise<void>((resolve, reject) => {
+          image.onload = () => resolve()
+          image.onerror = () => resolve() // Skip broken images
+          image.src = img.dataUrl
+        })
+        const px = img.x * scaleX * scale
+        const py = img.y * scaleY * scale
+        const pw = (img.w || 3) * scaleX * scale
+        const ph = (img.h || 2) * scaleY * scale
+        ctx.drawImage(image, px, py, pw, ph)
+      } catch {
+        // Skip images that fail to load
       }
+    }
+    onProgress(40 + Math.floor((i / parsedSlides.length) * 10))
+  }
 
+  onProgress(50)
+
+  // OCR processing if enabled
+  if (settings.enableOCR) {
+    try {
       await extractTextFromSlides(
-        slides, 
+        canvases,
         settings.ocrLanguage,
         (slideIndex, total, ocrProgress) => {
-          const baseProgress = 65
+          const baseProgress = 50
           const ocrProgressRange = 30
           const slideProgress = (slideIndex / total) * ocrProgressRange
           const withinSlideProgress = (ocrProgress.progress / 100) * (ocrProgressRange / total)
           onProgress(Math.floor(baseProgress + slideProgress + withinSlideProgress))
         }
       )
-
-      onProgress(95)
+      onProgress(80)
     } catch (error) {
       console.error('OCR processing error:', error)
     }
   }
 
-  clearInterval(progressInterval)
-  onProgress(100)
+  const pdfProgress = settings.enableOCR ? 80 : 50
 
-  const dataUrl = canvas.toDataURL('image/jpeg', settings.compression / 100)
-  const byteString = atob(dataUrl.split(',')[1])
-  const mimeString = dataUrl.split(',')[0].split(':')[1].split(';')[0]
-  const ab = new ArrayBuffer(byteString.length)
-  const ia = new Uint8Array(ab)
-  
-  for (let i = 0; i < byteString.length; i++) {
-    ia[i] = byteString.charCodeAt(i)
+  // Generate PDF using jsPDF
+  const jpegQuality = settings.compression / 100
+  const pdfWidth = 10 // inches
+  const pdfHeight = 7.5
+
+  const pdf = new jsPDF({
+    orientation: 'landscape',
+    unit: 'in',
+    format: [pdfWidth, pdfHeight]
+  })
+
+  for (let i = 0; i < canvases.length; i++) {
+    if (i > 0) {
+      pdf.addPage([pdfWidth, pdfHeight], 'landscape')
+    }
+
+    const imgData = canvases[i].toDataURL('image/jpeg', jpegQuality)
+    
+    if (settings.maintainAspectRatio) {
+      pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight)
+    } else {
+      pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight)
+    }
+
+    onProgress(pdfProgress + Math.floor((i / canvases.length) * 15))
   }
 
-  const pdfBlob = new Blob([ab], { type: 'application/pdf' })
+  onProgress(95)
+
+  const pdfBlob = pdf.output('blob')
+
+  onProgress(100)
 
   return {
     pdfBlob,
-    pdfSize: estimatedSize
+    pdfSize: pdfBlob.size
   }
 }
 
