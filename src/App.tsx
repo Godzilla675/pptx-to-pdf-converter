@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useKV } from '@github/spark/hooks'
 import { ConversionFile, ConversionSettings } from '@/lib/types'
 import { 
@@ -227,10 +227,14 @@ function App() {
     return () => window.removeEventListener('beforeunload', handler)
   }, [convertingCount])
 
+  // Track files in a ref for unmount cleanup
+  const filesRef = useRef(files)
+  filesRef.current = files
+
   // Cleanup all object URLs on unmount
   useEffect(() => {
     return () => {
-      files.forEach(file => {
+      filesRef.current.forEach(file => {
         if (file.pdfUrl) URL.revokeObjectURL(file.pdfUrl)
         if (file.thumbnailUrl?.startsWith('blob:')) URL.revokeObjectURL(file.thumbnailUrl)
       })

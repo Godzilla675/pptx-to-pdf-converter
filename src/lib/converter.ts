@@ -159,7 +159,7 @@ export const convertToPDF = async (
       onProgress(95)
     } catch (error) {
       console.error('OCR processing error:', error)
-      throw new Error('OCR processing failed. The PDF was created without text recognition. You can retry with OCR disabled.')
+      throw new Error('OCR processing failed during conversion. You can retry with OCR disabled.')
     }
   }
 
