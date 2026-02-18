@@ -9,7 +9,7 @@ export const formatFileSize = (bytes: number): string => {
   return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
 }
 
-export const validateFile = (file: File): { valid: boolean; error?: string } => {
+export const validateFile = (file: File): { valid: boolean; error?: string; warning?: string } => {
   const validExtensions = ['.pptx', '.ppt']
   const fileName = file.name.toLowerCase()
   const hasValidExtension = validExtensions.some(ext => fileName.endsWith(ext))
@@ -17,45 +17,64 @@ export const validateFile = (file: File): { valid: boolean; error?: string } => 
   if (!hasValidExtension) {
     return { valid: false, error: 'Invalid file format. Only .pptx and .ppt files are supported.' }
   }
+
+  if (file.size === 0) {
+    return { valid: false, error: 'File is empty (0 bytes). Please select a valid PowerPoint file.' }
+  }
   
   const maxSize = 100 * 1024 * 1024
   if (file.size > maxSize) {
     return { valid: false, error: 'File size exceeds 100MB limit.' }
   }
+
+  const warnSize = 50 * 1024 * 1024
+  if (file.size > warnSize) {
+    return { valid: true, warning: 'Large file detected (>50MB). Conversion may take longer.' }
+  }
   
   return { valid: true }
 }
 
-export const generateThumbnail = async (file: File): Promise<string> => {
-  return new Promise((resolve) => {
-    const canvas = document.createElement('canvas')
-    canvas.width = 200
-    canvas.height = 150
-    const ctx = canvas.getContext('2d')
-    
-    if (ctx) {
-      const gradient = ctx.createLinearGradient(0, 0, 200, 150)
-      gradient.addColorStop(0, '#4a90e2')
-      gradient.addColorStop(1, '#357abd')
-      ctx.fillStyle = gradient
-      ctx.fillRect(0, 0, 200, 150)
+export const generateThumbnail = async (file: File): Promise<string | undefined> => {
+  try {
+    return await new Promise((resolve) => {
+      const canvas = document.createElement('canvas')
+      canvas.width = 200
+      canvas.height = 150
+      const ctx = canvas.getContext('2d')
       
-      ctx.fillStyle = 'white'
-      ctx.font = 'bold 16px Space Grotesk, sans-serif'
-      ctx.textAlign = 'center'
-      ctx.fillText('PPTX', 100, 70)
+      if (ctx) {
+        const gradient = ctx.createLinearGradient(0, 0, 200, 150)
+        gradient.addColorStop(0, '#4a90e2')
+        gradient.addColorStop(1, '#357abd')
+        ctx.fillStyle = gradient
+        ctx.fillRect(0, 0, 200, 150)
+        
+        ctx.fillStyle = 'white'
+        ctx.font = 'bold 16px Space Grotesk, sans-serif'
+        ctx.textAlign = 'center'
+        ctx.fillText('PPTX', 100, 70)
+        
+        ctx.font = '12px Space Grotesk, sans-serif'
+        const displayName = file.name.length > 20 ? file.name.substring(0, 17) + '...' : file.name
+        ctx.fillText(displayName, 100, 95)
+      }
       
-      ctx.font = '12px Space Grotesk, sans-serif'
-      const displayName = file.name.length > 20 ? file.name.substring(0, 17) + '...' : file.name
-      ctx.fillText(displayName, 100, 95)
-    }
-    
-    resolve(canvas.toDataURL())
-  })
+      resolve(canvas.toDataURL())
+    })
+  } catch (error) {
+    console.error('Failed to generate thumbnail:', error)
+    return undefined
+  }
 }
 
 export const estimateSlideCount = async (file: File): Promise<number> => {
-  return Math.floor(Math.random() * 30) + 5
+  try {
+    return Math.floor(Math.random() * 30) + 5
+  } catch (error) {
+    console.error('Failed to estimate slide count:', error)
+    return 0
+  }
 }
 
 export const convertToPDF = async (
@@ -140,6 +159,7 @@ export const convertToPDF = async (
       onProgress(95)
     } catch (error) {
       console.error('OCR processing error:', error)
+      throw new Error('OCR processing failed. The PDF was created without text recognition. You can retry with OCR disabled.')
     }
   }
 
@@ -178,3 +198,38 @@ export const downloadPDF = (blob: Blob, fileName: string) => {
 export const generateId = (): string => {
   return Date.now().toString(36) + Math.random().toString(36).substr(2)
 }
+
+const BROWSER_LOCALE_TO_OCR: Record<string, string> = {
+  en: 'eng',
+  es: 'spa',
+  fr: 'fra',
+  de: 'deu',
+  zh: 'chi_sim',
+  ja: 'jpn',
+  ko: 'kor',
+  ar: 'ara',
+  ru: 'rus',
+  pt: 'por',
+}
+
+export const getOCRLanguageFromLocale = (): string => {
+  try {
+    const locale = navigator.language || 'en'
+    const lang = locale.split('-')[0].toLowerCase()
+    return BROWSER_LOCALE_TO_OCR[lang] || 'eng'
+  } catch {
+    return 'eng'
+  }
+}
+
+export const estimateOCRTime = (slideCount: number): string => {
+  const secondsPerSlide = 3
+  const totalSeconds = slideCount * secondsPerSlide
+  if (totalSeconds < 60) {
+    return `~${totalSeconds} seconds`
+  }
+  const minutes = Math.ceil(totalSeconds / 60)
+  return `~${minutes} minute${minutes > 1 ? 's' : ''}`
+}
+
+export const MAX_FILE_COUNT = 20

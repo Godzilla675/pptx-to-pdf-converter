@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useKV } from '@github/spark/hooks'
 import { ConversionFile, ConversionSettings } from '@/lib/types'
 import { 
@@ -7,7 +7,10 @@ import {
   estimateSlideCount, 
   convertToPDF, 
   downloadPDF,
-  generateId
+  generateId,
+  getOCRLanguageFromLocale,
+  estimateOCRTime,
+  MAX_FILE_COUNT
 } from '@/lib/converter'
 import { UploadZone } from '@/components/UploadZone'
 import { FileCard } from '@/components/FileCard'
@@ -21,31 +24,67 @@ import { AnimatePresence } from 'framer-motion'
 
 function App() {
   const [files, setFiles] = useState<ConversionFile[]>([])
+  const detectedOCRLanguage = getOCRLanguageFromLocale()
   const [settings = {
     quality: 'high' as const,
     maintainAspectRatio: true,
     includeNotes: false,
     compression: 85,
     enableOCR: false,
-    ocrLanguage: 'eng'
+    ocrLanguage: detectedOCRLanguage
   }, setSettings] = useKV<ConversionSettings>('conversion-settings', {
     quality: 'high',
     maintainAspectRatio: true,
     includeNotes: false,
     compression: 85,
     enableOCR: false,
-    ocrLanguage: 'eng'
+    ocrLanguage: detectedOCRLanguage
   })
 
   const handleFilesSelected = useCallback(async (selectedFiles: File[]) => {
+    // File count limit check
+    const availableSlots = MAX_FILE_COUNT - files.length
+    if (availableSlots <= 0) {
+      toast.error('File queue is full', {
+        description: `Maximum ${MAX_FILE_COUNT} files allowed. Remove some files before adding more.`
+      })
+      return
+    }
+
+    const filesToProcess = selectedFiles.slice(0, availableSlots)
+    if (filesToProcess.length < selectedFiles.length) {
+      toast.warning(`Only ${filesToProcess.length} of ${selectedFiles.length} files added`, {
+        description: `Queue limit is ${MAX_FILE_COUNT} files.`
+      })
+    }
+
     const newFiles: ConversionFile[] = []
 
-    for (const file of selectedFiles) {
+    for (const file of filesToProcess) {
       const validation = validateFile(file)
       
       if (!validation.valid) {
         toast.error(`Invalid file: ${file.name}`, {
           description: validation.error
+        })
+        continue
+      }
+
+      if (validation.warning) {
+        toast.warning(`${file.name}`, {
+          description: validation.warning
+        })
+      }
+
+      // Duplicate file detection
+      const isDuplicate = files.some(
+        existing => existing.name === file.name && existing.size === file.size
+      ) || newFiles.some(
+        existing => existing.name === file.name && existing.size === file.size
+      )
+      if (isDuplicate) {
+        toast.warning(`Duplicate file skipped: ${file.name}`, {
+          description: 'A file with the same name and size is already in the queue.'
         })
         continue
       }
@@ -72,7 +111,7 @@ function App() {
         description: 'Ready to convert'
       })
     }
-  }, [])
+  }, [files])
 
   const handleConvert = useCallback(async (fileId: string) => {
     const fileIndex = files.findIndex(f => f.id === fileId)
@@ -85,7 +124,9 @@ function App() {
     ))
 
     toast.info(`Converting ${file.name}...`, {
-      description: settings.enableOCR ? 'Processing with OCR - this may take longer' : 'This may take a few moments'
+      description: settings.enableOCR 
+        ? `Processing with OCR (${estimateOCRTime(file.slideCount || 0)}) - this may take longer` 
+        : 'This may take a few moments'
     })
 
     try {
@@ -161,8 +202,12 @@ function App() {
   const handleRemove = useCallback((fileId: string) => {
     setFiles(prev => {
       const file = prev.find(f => f.id === fileId)
+      if (file?.status === 'converting') return prev
       if (file?.pdfUrl) {
         URL.revokeObjectURL(file.pdfUrl)
+      }
+      if (file?.thumbnailUrl?.startsWith('blob:')) {
+        URL.revokeObjectURL(file.thumbnailUrl)
       }
       return prev.filter(f => f.id !== fileId)
     })
@@ -171,6 +216,32 @@ function App() {
   const readyCount = files.filter(f => f.status === 'ready').length
   const convertingCount = files.filter(f => f.status === 'converting').length
   const completeCount = files.filter(f => f.status === 'complete').length
+
+  // Warn user before navigating away during active conversion
+  useEffect(() => {
+    if (convertingCount === 0) return
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [convertingCount])
+
+  // Cleanup all object URLs on unmount
+  useEffect(() => {
+    return () => {
+      files.forEach(file => {
+        if (file.pdfUrl) URL.revokeObjectURL(file.pdfUrl)
+        if (file.thumbnailUrl?.startsWith('blob:')) URL.revokeObjectURL(file.thumbnailUrl)
+      })
+    }
+  }, [])
+
+  const handleFilesRejected = useCallback((count: number) => {
+    toast.error(`${count} file(s) rejected`, {
+      description: 'Only .pptx and .ppt files are supported.'
+    })
+  }, [])
 
   return (
     <div className="min-h-screen bg-background">
@@ -206,6 +277,7 @@ function App() {
             <div className="lg:col-span-2 space-y-6">
               <UploadZone 
                 onFilesSelected={handleFilesSelected}
+                onFilesRejected={handleFilesRejected}
                 disabled={convertingCount > 0}
               />
 
