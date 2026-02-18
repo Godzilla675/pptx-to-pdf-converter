@@ -18,6 +18,10 @@ export const initializeOCRWorker = async (language: string = 'eng'): Promise<voi
   }
 
   worker = await createWorker(language, OEM.LSTM_ONLY, {
+    workerBlobURL: false,
+    workerPath: new URL('/tesseract-data/worker.min.js', window.location.href).href,
+    corePath: new URL('/tesseract-data', window.location.href).href,
+    langPath: new URL('/tesseract-data/lang', window.location.href).href,
     logger: (m: { status: string; progress: number }) => {
       // logging handled per-call via onProgress
     }
