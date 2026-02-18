@@ -5,10 +5,11 @@ import { motion } from 'framer-motion'
 
 interface UploadZoneProps {
   onFilesSelected: (files: File[]) => void
+  onFilesRejected?: (count: number) => void
   disabled?: boolean
 }
 
-export function UploadZone({ onFilesSelected, disabled }: UploadZoneProps) {
+export function UploadZone({ onFilesSelected, onFilesRejected, disabled }: UploadZoneProps) {
   const [isDragging, setIsDragging] = useState(false)
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -32,14 +33,24 @@ export function UploadZone({ onFilesSelected, disabled }: UploadZoneProps) {
 
     if (disabled) return
 
-    const droppedFiles = Array.from(e.dataTransfer.files).filter(
-      file => file.name.endsWith('.pptx') || file.name.endsWith('.ppt')
+    const allFiles = Array.from(e.dataTransfer.files)
+    const droppedFiles = allFiles.filter(
+      file => {
+        const name = file.name.toLowerCase()
+        return name.endsWith('.pptx') || name.endsWith('.ppt')
+      }
     )
+
+    const rejectedCount = allFiles.length - droppedFiles.length
     
     if (droppedFiles.length > 0) {
       onFilesSelected(droppedFiles)
     }
-  }, [disabled, onFilesSelected])
+
+    if (rejectedCount > 0) {
+      onFilesRejected?.(rejectedCount)
+    }
+  }, [disabled, onFilesSelected, onFilesRejected])
 
   const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     if (disabled) return

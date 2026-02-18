@@ -131,6 +131,7 @@ export function FileCard({ file, onRemove, onDownload, onConvert }: FileCardProp
                 size="sm"
                 variant="ghost"
                 onClick={() => onRemove(file.id)}
+                disabled={file.status === 'converting'}
                 className="text-muted-foreground hover:text-destructive"
               >
                 <Trash weight="bold" size={16} />
