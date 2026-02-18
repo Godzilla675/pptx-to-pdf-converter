@@ -262,7 +262,7 @@ const renderSlideToCanvas = (
   slideIndex: number,
   totalSlides: number,
   fileName: string,
-  quality: string
+  quality: ConversionSettings['quality']
 ): HTMLCanvasElement => {
   const scale = quality === 'maximum' ? 2 : quality === 'high' ? 1.5 : 1
   const baseW = 960
