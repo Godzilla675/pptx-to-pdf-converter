@@ -28,12 +28,16 @@ function App() {
     quality: 'high' as const,
     maintainAspectRatio: true,
     includeNotes: false,
-    compression: 85
+    compression: 85,
+    enableOCR: false,
+    ocrLanguage: 'eng'
   }, setSettings] = useKV<ConversionSettings>('conversion-settings', {
     quality: 'high',
     maintainAspectRatio: true,
     includeNotes: false,
-    compression: 85
+    compression: 85,
+    enableOCR: false,
+    ocrLanguage: 'eng'
   })
   const [history = [], setHistory] = useKV<ConversionHistory[]>('conversion-history', [])
 
@@ -85,7 +89,7 @@ function App() {
     ))
 
     toast.info(`Converting ${file.name}...`, {
-      description: 'This may take a few moments'
+      description: settings.enableOCR ? 'Processing with OCR - this may take longer' : 'This may take a few moments'
     })
 
     try {
@@ -117,7 +121,7 @@ function App() {
       setHistory(prev => [historyEntry, ...(prev || [])].slice(0, 10))
 
       toast.success(`${file.name} converted!`, {
-        description: 'Click Download to save your PDF',
+        description: settings.enableOCR ? 'PDF is now searchable with OCR text layer' : 'Click Download to save your PDF',
         action: {
           label: 'Download',
           onClick: () => downloadPDF(pdfBlob, file.name)

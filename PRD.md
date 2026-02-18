@@ -54,6 +54,13 @@ A web-based PowerPoint to PDF converter that transforms PPTX files into high-qua
 - Progression: Conversion completes → Save to history → Display in sidebar → Allow re-download
 - Success criteria: History persists across sessions, files accessible for re-download, limit to 10 most recent
 
+**OCR (Optical Character Recognition)**
+- Functionality: Extract text from scanned slides to make PDFs searchable, support multiple languages
+- Purpose: Enable text search and selection in PDFs generated from image-based or scanned slides
+- Trigger: User enables OCR in settings before conversion
+- Progression: Enable OCR setting → Select language → Convert file → OCR processes each slide → Embed text layer in PDF → PDF becomes searchable
+- Success criteria: Text accurately extracted from slides, PDF search functionality works, supports 10+ languages including English, Spanish, French, German, Chinese, Japanese, Korean, Arabic, Russian, and Portuguese
+
 ## Edge Case Handling
 
 - **Invalid File Format**: Display clear error message, highlight accepted formats (.pptx), reject with toast notification
@@ -62,6 +69,9 @@ A web-based PowerPoint to PDF converter that transforms PPTX files into high-qua
 - **Browser Compatibility**: Detect unsupported browsers, show compatibility message with alternatives
 - **Conversion Failure**: Retry mechanism with exponential backoff, clear error reporting, maintain queue integrity
 - **Network Issues**: Handle timeout gracefully, allow offline operation for core features, cache converted files
+- **OCR Failures**: Gracefully degrade if OCR fails, allow conversion to proceed without OCR, display warning message
+- **Language Detection**: Auto-suggest language based on browser locale, allow manual override
+- **Large Slide Decks**: Show realistic OCR processing time estimates for presentations with many slides
 
 ## Design Direction
 

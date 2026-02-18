@@ -20,6 +20,8 @@ export interface ConversionSettings {
   maintainAspectRatio: boolean
   includeNotes: boolean
   compression: number
+  enableOCR: boolean
+  ocrLanguage: string
 }
 
 export interface ConversionHistory {

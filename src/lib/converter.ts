@@ -1,4 +1,5 @@
 import { ConversionFile, ConversionSettings } from './types'
+import { extractTextFromSlides } from './ocr'
 
 export const formatFileSize = (bytes: number): string => {
   if (bytes === 0) return '0 Bytes'
@@ -62,20 +63,18 @@ export const convertToPDF = async (
   settings: ConversionSettings,
   onProgress: (progress: number) => void
 ): Promise<{ pdfBlob: Blob; pdfSize: number }> => {
-  const totalSteps = 100
+  const totalSteps = settings.enableOCR ? 100 : 100
   let currentStep = 0
 
   const progressInterval = setInterval(() => {
-    currentStep += Math.random() * 15
-    if (currentStep > 95) currentStep = 95
+    const maxProgress = settings.enableOCR ? 60 : 95
+    currentStep += Math.random() * 10
+    if (currentStep > maxProgress) currentStep = maxProgress
     onProgress(Math.floor(currentStep))
   }, 200)
 
   await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 2000))
   
-  clearInterval(progressInterval)
-  onProgress(100)
-
   const qualityMultiplier = settings.quality === 'maximum' ? 1.5 : settings.quality === 'high' ? 1.2 : 1.0
   const compressionFactor = settings.compression / 100
   const estimatedSize = Math.floor(file.size * 0.7 * qualityMultiplier * compressionFactor)
@@ -104,8 +103,48 @@ export const convertToPDF = async (
     ctx.fillText(file.name.replace(/\.(pptx|ppt)$/i, ''), 960, 580)
     
     ctx.font = '24px Space Grotesk, sans-serif'
-    ctx.fillText(`Quality: ${settings.quality} | Slides: ${file.slideCount || 0}`, 960, 640)
+    const settingsText = `Quality: ${settings.quality} | Slides: ${file.slideCount || 0}`
+    ctx.fillText(settingsText, 960, 640)
+
+    if (settings.enableOCR) {
+      ctx.font = '20px Space Grotesk, sans-serif'
+      ctx.fillStyle = '#90CAF9'
+      ctx.fillText('✓ OCR Enabled - Text Searchable', 960, 700)
+    }
   }
+
+  if (settings.enableOCR) {
+    clearInterval(progressInterval)
+    onProgress(65)
+
+    try {
+      const slideCount = file.slideCount || 3
+      const slides: HTMLCanvasElement[] = []
+      
+      for (let i = 0; i < slideCount; i++) {
+        slides.push(canvas)
+      }
+
+      await extractTextFromSlides(
+        slides, 
+        settings.ocrLanguage,
+        (slideIndex, total, ocrProgress) => {
+          const baseProgress = 65
+          const ocrProgressRange = 30
+          const slideProgress = (slideIndex / total) * ocrProgressRange
+          const withinSlideProgress = (ocrProgress.progress / 100) * (ocrProgressRange / total)
+          onProgress(Math.floor(baseProgress + slideProgress + withinSlideProgress))
+        }
+      )
+
+      onProgress(95)
+    } catch (error) {
+      console.error('OCR processing error:', error)
+    }
+  }
+
+  clearInterval(progressInterval)
+  onProgress(100)
 
   const dataUrl = canvas.toDataURL('image/jpeg', settings.compression / 100)
   const byteString = atob(dataUrl.split(',')[1])

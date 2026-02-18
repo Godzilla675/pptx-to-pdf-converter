@@ -5,7 +5,8 @@ import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
-import { Gear } from '@phosphor-icons/react'
+import { Badge } from '@/components/ui/badge'
+import { Gear, TextAa } from '@phosphor-icons/react'
 
 interface SettingsPanelProps {
   settings: ConversionSettings
@@ -106,6 +107,65 @@ export function SettingsPanel({ settings, onSettingsChange }: SettingsPanelProps
               onCheckedChange={(checked) => updateSettings({ includeNotes: checked })}
             />
           </div>
+        </div>
+
+        <Separator />
+
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 mb-2">
+            <TextAa weight="duotone" size={20} className="text-primary" />
+            <h3 className="text-sm font-semibold">OCR Settings</h3>
+            <Badge variant="secondary" className="text-xs">New</Badge>
+          </div>
+          
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <Label htmlFor="enable-ocr" className="text-sm font-medium">
+                Enable OCR
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Make scanned slides text-searchable
+              </p>
+            </div>
+            <Switch
+              id="enable-ocr"
+              checked={settings.enableOCR}
+              onCheckedChange={(checked) => updateSettings({ enableOCR: checked })}
+            />
+          </div>
+
+          {settings.enableOCR && (
+            <div className="space-y-3 pl-1 border-l-2 border-accent/30">
+              <div className="pl-3">
+                <Label htmlFor="ocr-language" className="text-sm font-medium">
+                  OCR Language
+                </Label>
+                <Select
+                  value={settings.ocrLanguage}
+                  onValueChange={(value: string) => updateSettings({ ocrLanguage: value })}
+                >
+                  <SelectTrigger id="ocr-language" className="mt-2">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="eng">English</SelectItem>
+                    <SelectItem value="spa">Spanish</SelectItem>
+                    <SelectItem value="fra">French</SelectItem>
+                    <SelectItem value="deu">German</SelectItem>
+                    <SelectItem value="chi_sim">Chinese (Simplified)</SelectItem>
+                    <SelectItem value="jpn">Japanese</SelectItem>
+                    <SelectItem value="kor">Korean</SelectItem>
+                    <SelectItem value="ara">Arabic</SelectItem>
+                    <SelectItem value="rus">Russian</SelectItem>
+                    <SelectItem value="por">Portuguese</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Select the primary language in your slides
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </Card>
