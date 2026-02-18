@@ -1,0 +1,30 @@
+appId: com.powerpoint-to-pdf.converter
+productName: PowerPoint to PDF Converter
+directories:
+  output: release
+files:
+  - dist/**/*
+  - electron/**/*
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: null
+nsis:
+  oneClick: true
+  perMachine: false
+  allowToChangeInstallationDirectory: false
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  icon: null
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+  icon: null
