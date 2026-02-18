@@ -1,14 +1,13 @@
 import { useState, useCallback } from 'react'
 import { useKV } from '@github/spark/hooks'
-import { ConversionFile, ConversionSettings, ConversionHistory } from '@/lib/types'
+import { ConversionFile, ConversionSettings } from '@/lib/types'
 import { 
   validateFile, 
   generateThumbnail, 
   estimateSlideCount, 
   convertToPDF, 
   downloadPDF,
-  generateId,
-  formatFileSize
+  generateId
 } from '@/lib/converter'
 import { UploadZone } from '@/components/UploadZone'
 import { FileCard } from '@/components/FileCard'
@@ -16,11 +15,9 @@ import { SettingsPanel } from '@/components/SettingsPanel'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Separator } from '@/components/ui/separator'
 import { toast } from 'sonner'
 import { ArrowsDownUp, Clock, FilePdf } from '@phosphor-icons/react'
-import { motion, AnimatePresence } from 'framer-motion'
-import { format } from 'date-fns'
+import { AnimatePresence } from 'framer-motion'
 
 function App() {
   const [files, setFiles] = useState<ConversionFile[]>([])
@@ -39,7 +36,6 @@ function App() {
     enableOCR: false,
     ocrLanguage: 'eng'
   })
-  const [history = [], setHistory] = useKV<ConversionHistory[]>('conversion-history', [])
 
   const handleFilesSelected = useCallback(async (selectedFiles: File[]) => {
     const newFiles: ConversionFile[] = []
@@ -109,17 +105,6 @@ function App() {
         f.id === fileId ? { ...f, status: 'complete', progress: 100, pdfUrl } : f
       ))
 
-      const historyEntry: ConversionHistory = {
-        id: generateId(),
-        fileName: file.name,
-        convertedAt: Date.now(),
-        pdfUrl,
-        originalSize: file.size,
-        pdfSize
-      }
-
-      setHistory(prev => [historyEntry, ...(prev || [])].slice(0, 10))
-
       toast.success(`${file.name} converted!`, {
         description: settings.enableOCR ? 'PDF is now searchable with OCR text layer' : 'Click Download to save your PDF',
         action: {
@@ -140,7 +125,7 @@ function App() {
         description: error instanceof Error ? error.message : 'Unknown error occurred'
       })
     }
-  }, [files, settings, setHistory])
+  }, [files, settings])
 
   const handleConvertAll = useCallback(async () => {
     const readyFiles = files.filter(f => f.status === 'ready')
@@ -279,40 +264,7 @@ function App() {
                 </Card>
               )}
 
-              {history.length > 0 && (
-                <Card className="p-6">
-                  <h2 className="text-lg font-semibold mb-4">Recent Conversions</h2>
-                  <div className="space-y-2">
-                    {history.slice(0, 5).map((item) => (
-                      <motion.div
-                        key={item.id}
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        className="flex items-center justify-between p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
-                      >
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium text-sm truncate">{item.fileName}</p>
-                          <p className="text-xs text-muted-foreground font-mono">
-                            {format(item.convertedAt, 'MMM d, h:mm a')} • {formatFileSize(item.pdfSize)}
-                          </p>
-                        </div>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => {
-                            fetch(item.pdfUrl)
-                              .then(res => res.blob())
-                              .then(blob => downloadPDF(blob, item.fileName))
-                              .catch(() => toast.error('File no longer available'))
-                          }}
-                        >
-                          <FilePdf weight="fill" size={16} />
-                        </Button>
-                      </motion.div>
-                    ))}
-                  </div>
-                </Card>
-              )}
+
             </div>
 
             <div className="lg:col-span-1">
