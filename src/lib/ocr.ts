@@ -1,4 +1,4 @@
-import { createWorker } from 'tesseract.js'
+import { createWorker, OEM } from 'tesseract.js'
 
 export interface OCRProgress {
   status: string
@@ -17,10 +17,14 @@ export const initializeOCRWorker = async (language: string = 'eng'): Promise<voi
     await worker.terminate()
   }
 
-  worker = await createWorker(language, 1, {
-    workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js',
-    langPath: 'https://tessdata.projectnaptha.com/4.0.0',
-    corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core.wasm.js',
+  worker = await createWorker(language, OEM.LSTM_ONLY, {
+    workerBlobURL: false,
+    workerPath: new URL('/tesseract-data/worker.min.js', window.location.href).href,
+    corePath: new URL('/tesseract-data', window.location.href).href,
+    langPath: new URL('/tesseract-data/lang', window.location.href).href,
+    logger: (m: { status: string; progress: number }) => {
+      // logging handled per-call via onProgress
+    }
   })
 }
 

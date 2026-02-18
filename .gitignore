@@ -32,3 +32,6 @@ pids
 .devcontainer/
 
 .spark-workbench-id
+
+# Tesseract.js local files (copied via postinstall)
+public/tesseract-data
