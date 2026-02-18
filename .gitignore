@@ -33,3 +33,6 @@ pids
 
 .spark-workbench-id
 release
+
+# Tesseract.js local files (copied via postinstall)
+public/tesseract-data
