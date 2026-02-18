@@ -428,12 +428,7 @@ export const convertToPDF = async (
     }
 
     const imgData = canvases[i].toDataURL('image/jpeg', jpegQuality)
-    
-    if (settings.maintainAspectRatio) {
-      pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight)
-    } else {
-      pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight)
-    }
+    pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight)
 
     onProgress(pdfProgress + Math.floor((i / canvases.length) * 15))
   }
