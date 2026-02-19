@@ -99,8 +99,8 @@ const parsePptxSlides = async (file: File): Promise<{ slides: SlideData[]; slide
     if (sldSz) {
       const cx = sldSz.getAttribute('cx')
       const cy = sldSz.getAttribute('cy')
-      if (cx) slideSize.widthInches = parseInt(cx, 10) / 914400
-      if (cy) slideSize.heightInches = parseInt(cy, 10) / 914400
+      if (cx) slideSize.widthInches = parseEmu(cx)
+      if (cy) slideSize.heightInches = parseEmu(cy)
     }
   }
 
@@ -287,7 +287,8 @@ const renderSlideToCanvas = (
 ): HTMLCanvasElement => {
   const scale = quality === 'maximum' ? 2 : quality === 'high' ? 1.5 : 1
   const baseH = 540
-  const baseW = Math.round(baseH * (slideSize.widthInches / slideSize.heightInches))
+  const safeHeight = slideSize.heightInches > 0 ? slideSize.heightInches : 7.5
+  const baseW = Math.round(baseH * (slideSize.widthInches > 0 ? slideSize.widthInches : 13.333) / safeHeight)
   const canvas = document.createElement('canvas')
   canvas.width = baseW * scale
   canvas.height = baseH * scale
@@ -405,7 +406,8 @@ export const convertToPDF = async (
     const scale = settings.quality === 'maximum' ? 2 : settings.quality === 'high' ? 1.5 : 1
     const renderSize = settings.maintainAspectRatio ? slideSize : pdfSize
     const baseH = 540
-    const baseW = Math.round(baseH * (renderSize.widthInches / renderSize.heightInches))
+    const safeRenderHeight = renderSize.heightInches > 0 ? renderSize.heightInches : 7.5
+    const baseW = Math.round(baseH * (renderSize.widthInches > 0 ? renderSize.widthInches : 13.333) / safeRenderHeight)
     const pptWidth = renderSize.widthInches
     const pptHeight = renderSize.heightInches
     const scaleX = baseW / pptWidth
@@ -465,12 +467,12 @@ export const convertToPDF = async (
   const pdf = new jsPDF({
     orientation: isLandscape ? 'landscape' : 'portrait',
     unit: 'in',
-    format: isLandscape ? [pdfWidth, pdfHeight] : [pdfHeight, pdfWidth]
+    format: [pdfWidth, pdfHeight]
   })
 
   for (let i = 0; i < canvases.length; i++) {
     if (i > 0) {
-      pdf.addPage(isLandscape ? [pdfWidth, pdfHeight] : [pdfHeight, pdfWidth], isLandscape ? 'landscape' : 'portrait')
+      pdf.addPage([pdfWidth, pdfHeight], isLandscape ? 'landscape' : 'portrait')
     }
 
     const imgData = canvases[i].toDataURL('image/jpeg', jpegQuality)
