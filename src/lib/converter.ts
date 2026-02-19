@@ -75,14 +75,34 @@ interface SlideData {
   images: { dataUrl: string; x: number; y: number; w: number; h: number }[]
 }
 
+interface SlideSize {
+  widthInches: number
+  heightInches: number
+}
+
 const parseEmu = (emu: string | undefined): number => {
   if (!emu) return 0
   return parseInt(emu, 10) / 914400 // EMU to inches
 }
 
-const parsePptxSlides = async (file: File): Promise<{ slides: SlideData[]; slideCount: number }> => {
+const parsePptxSlides = async (file: File): Promise<{ slides: SlideData[]; slideCount: number; slideSize: SlideSize }> => {
   const arrayBuffer = await file.arrayBuffer()
   const zip = await JSZip.loadAsync(arrayBuffer)
+
+  // Read slide dimensions from presentation.xml
+  let slideSize: SlideSize = { widthInches: 13.333, heightInches: 7.5 } // Default widescreen 16:9
+  const presentationXml = await zip.file('ppt/presentation.xml')?.async('text')
+  if (presentationXml) {
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(presentationXml, 'text/xml')
+    const sldSz = doc.getElementsByTagName('p:sldSz')[0]
+    if (sldSz) {
+      const cx = sldSz.getAttribute('cx')
+      const cy = sldSz.getAttribute('cy')
+      if (cx) slideSize.widthInches = parseEmu(cx)
+      if (cy) slideSize.heightInches = parseEmu(cy)
+    }
+  }
 
   // Find all slide files
   const slideFiles: string[] = []
@@ -238,7 +258,7 @@ const parsePptxSlides = async (file: File): Promise<{ slides: SlideData[]; slide
     slides.push(slideData)
   }
 
-  return { slides, slideCount: slideFiles.length }
+  return { slides, slideCount: slideFiles.length, slideSize }
 }
 
 export const estimateSlideCount = async (file: File): Promise<number> => {
@@ -262,11 +282,13 @@ const renderSlideToCanvas = (
   slideIndex: number,
   totalSlides: number,
   fileName: string,
-  quality: ConversionSettings['quality']
+  quality: ConversionSettings['quality'],
+  slideSize: SlideSize
 ): HTMLCanvasElement => {
   const scale = quality === 'maximum' ? 2 : quality === 'high' ? 1.5 : 1
-  const baseW = 960
   const baseH = 540
+  const safeHeight = slideSize.heightInches > 0 ? slideSize.heightInches : 7.5
+  const baseW = Math.round(baseH * (slideSize.widthInches > 0 ? slideSize.widthInches : 13.333) / safeHeight)
   const canvas = document.createElement('canvas')
   canvas.width = baseW * scale
   canvas.height = baseH * scale
@@ -278,8 +300,8 @@ const renderSlideToCanvas = (
   ctx.fillStyle = 'white'
   ctx.fillRect(0, 0, baseW, baseH)
 
-  const pptWidth = 10 // standard PPTX width in inches
-  const pptHeight = 7.5
+  const pptWidth = slideSize.widthInches
+  const pptHeight = slideSize.heightInches
   const scaleX = baseW / pptWidth
   const scaleY = baseH / pptHeight
 
@@ -339,9 +361,11 @@ export const convertToPDF = async (
 
   // Parse the PPTX file
   let parsedSlides: SlideData[]
+  let slideSize: SlideSize
   try {
     const result = await parsePptxSlides(file.file)
     parsedSlides = result.slides
+    slideSize = result.slideSize
   } catch (error) {
     throw new Error('Failed to parse PowerPoint file. Make sure it is a valid .pptx file.')
   }
@@ -352,6 +376,11 @@ export const convertToPDF = async (
 
   onProgress(20)
 
+  // Determine PDF page dimensions
+  const pdfSize: SlideSize = settings.maintainAspectRatio
+    ? slideSize
+    : { widthInches: 11.693, heightInches: 8.268 } // A4 landscape
+
   // Render slides to canvases
   const canvases: HTMLCanvasElement[] = []
   for (let i = 0; i < parsedSlides.length; i++) {
@@ -360,7 +389,8 @@ export const convertToPDF = async (
       i,
       parsedSlides.length,
       file.name,
-      settings.quality
+      settings.quality,
+      settings.maintainAspectRatio ? slideSize : pdfSize
     )
     canvases.push(canvas)
     onProgress(20 + Math.floor((i / parsedSlides.length) * 20))
@@ -374,10 +404,12 @@ export const convertToPDF = async (
     const canvas = canvases[i]
     const ctx = canvas.getContext('2d')!
     const scale = settings.quality === 'maximum' ? 2 : settings.quality === 'high' ? 1.5 : 1
-    const baseW = 960
+    const renderSize = settings.maintainAspectRatio ? slideSize : pdfSize
     const baseH = 540
-    const pptWidth = 10
-    const pptHeight = 7.5
+    const safeRenderHeight = renderSize.heightInches > 0 ? renderSize.heightInches : 7.5
+    const baseW = Math.round(baseH * (renderSize.widthInches > 0 ? renderSize.widthInches : 13.333) / safeRenderHeight)
+    const pptWidth = renderSize.widthInches
+    const pptHeight = renderSize.heightInches
     const scaleX = baseW / pptWidth
     const scaleY = baseH / pptHeight
 
@@ -428,18 +460,19 @@ export const convertToPDF = async (
 
   // Generate PDF using jsPDF
   const jpegQuality = settings.compression / 100
-  const pdfWidth = 10 // inches
-  const pdfHeight = 7.5
+  const pdfWidth = pdfSize.widthInches
+  const pdfHeight = pdfSize.heightInches
+  const isLandscape = pdfWidth > pdfHeight
 
   const pdf = new jsPDF({
-    orientation: 'landscape',
+    orientation: isLandscape ? 'landscape' : 'portrait',
     unit: 'in',
     format: [pdfWidth, pdfHeight]
   })
 
   for (let i = 0; i < canvases.length; i++) {
     if (i > 0) {
-      pdf.addPage([pdfWidth, pdfHeight], 'landscape')
+      pdf.addPage([pdfWidth, pdfHeight], isLandscape ? 'landscape' : 'portrait')
     }
 
     const imgData = canvases[i].toDataURL('image/jpeg', jpegQuality)
