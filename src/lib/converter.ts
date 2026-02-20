@@ -403,7 +403,6 @@ export const convertToPDF = async (
     const slideData = parsedSlides[i]
     const canvas = canvases[i]
     const ctx = canvas.getContext('2d')!
-    const scale = settings.quality === 'maximum' ? 2 : settings.quality === 'high' ? 1.5 : 1
     const renderSize = settings.maintainAspectRatio ? slideSize : pdfSize
     const baseH = 540
     const safeRenderHeight = renderSize.heightInches > 0 ? renderSize.heightInches : 7.5
@@ -421,10 +420,10 @@ export const convertToPDF = async (
           image.onerror = () => resolve() // Skip broken images
           image.src = img.dataUrl
         })
-        const px = img.x * scaleX * scale
-        const py = img.y * scaleY * scale
-        const pw = (img.w || 3) * scaleX * scale
-        const ph = (img.h || 2) * scaleY * scale
+        const px = img.x * scaleX
+        const py = img.y * scaleY
+        const pw = (img.w || 3) * scaleX
+        const ph = (img.h || 2) * scaleY
         ctx.drawImage(image, px, py, pw, ph)
       } catch {
         // Skip images that fail to load
